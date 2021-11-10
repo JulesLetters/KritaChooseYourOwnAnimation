@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=choose_your_own_animation
+X-Python-2-Compatible=false
+Name=Choose Your Own Animation
+Comment=A tool to help create animations by allowing you to choose the next frame from a subset of your specially named layers.
