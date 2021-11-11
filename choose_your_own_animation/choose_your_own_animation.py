@@ -1,13 +1,13 @@
 import datetime
 import re
 from collections import defaultdict
-from typing import List, Dict, Set, Tuple
+from typing import List, Dict, Set, Tuple, Optional
 
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QStandardItem, QStandardItemModel, QIcon, QPixmap
 from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout, QListView, QPushButton, QWidget, QSplitter, QSpinBox, QTextEdit, \
     QLineEdit
-from krita import Krita, Node, DockWidget, DockWidgetFactory, DockWidgetFactoryBase
+from krita import Krita, Document, Node, DockWidget, DockWidgetFactory, DockWidgetFactoryBase
 
 
 class ChooseYourOwnAnimation(DockWidget):
@@ -247,7 +247,7 @@ class ChooseYourOwnAnimation(DockWidget):
         self.log_info(f"User picked index {clicked_index}")
 
     @staticmethod
-    def get_active_document():
+    def get_active_document() -> Optional[Document]:
         return Krita.instance().activeDocument()
 
     def get_node_pixel_projection(self, node_name):
