@@ -1,27 +1,50 @@
 import datetime
+import json
+import os
 import re
 from collections import defaultdict
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Dict, Set, Tuple, Optional, Match
 
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QStandardItem, QStandardItemModel, QIcon, QPixmap
 from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout, QListView, QPushButton, QWidget, QSplitter, QSpinBox, QTextEdit, \
     QLineEdit
-from krita import Krita, Document, Node, DockWidget, DockWidgetFactory, DockWidgetFactoryBase
+from krita import Krita, Document, Node, InfoObject, DockWidget, DockWidgetFactory, DockWidgetFactoryBase
 
 
 class ChooseYourOwnAnimation(DockWidget):
     WINDOW_TITLE = "Choose Your Own Animation"
+
     ANIMATION_ROOT_LAYER_NAME = "Animation"
     FRAMES_ROOT_LAYER_NAME = 'Frames'
+
+    INVALID_FILENAME_CHARACTERS = r'<>:"/\|?*'
+    INVALID_FILENAME_CHARACTERS_PATTERN = re.compile(f"[{re.escape(INVALID_FILENAME_CHARACTERS)}]")
     COMMENT_PATTERN = re.compile(r"\[.*?]")
-    LAYER_NAME_PATTERN = re.compile(r"(?P<name>\S+)\s*(?:\((?P<aliases>[^()]+)\))? - (?P<dests>.+)")
+    LAYER_NAME_PATTERN = re.compile(r"(?P<name>\S+)\s*(?:\((?P<aliases>[^()]+)\))? - (?P<destinations>.+)")
+
+    NODE_DATA = Qt.UserRole + 1
+
+    KEY_FRAMES_DIRECTORY = "frames_directory"
+    KEY_FRAMES_PER_SECOND = "frames_per_second"
+    KEY_FRAMES_LIST = "frames"
+
+    KEY_FRAMES_LIST_FRAME_KEY = "frame_name"
+    KEY_FRAMES_LIST_FRAME_DURATION = "duration"
+
+    DESCRIPTOR_FILE_SUFFIX = "_cyoa_descriptor.json"
+    DESCRIPTOR_FRAMES_DIRECTORY = "cyoa_frames"
+    FRAME_FULL_NAME_FILENAME = "frame_full_names.json"
+
+    SCALING_METHOD_NONE = "None"
 
     def __init__(self):
         super().__init__()
         self.full_log = ""
         self.frame_name_to_node: Dict[str, Node] = {}
         self.frame_name_to_destination_nodes: Dict[str, List[Node]] = {}
+
+        self.descriptor_frames = []
 
         self.setWindowTitle(self.WINDOW_TITLE)
         base_widget = QWidget()
@@ -48,28 +71,43 @@ class ChooseYourOwnAnimation(DockWidget):
         # Current Frame Textbox
         # Goes here. Also will need a label, like the spinner below.
 
-        # Number of frames to add Spinner. Probably needs to be on 'self' to get value.
+        # Number of frames to add Spinner.
         # TODO: Needs a label inside a... QHBoxLayout?
-        frames_to_add_spinner = QSpinBox()
-        frames_to_add_spinner.setMinimum(1)
-        frames_to_add_spinner.setValue(2)
-        left_layout.addWidget(frames_to_add_spinner)
+        self.frames_to_add_spinner = QSpinBox()
+        self.frames_to_add_spinner.setMinimum(1)
+        self.frames_to_add_spinner.setValue(2)
+        left_layout.addWidget(self.frames_to_add_spinner)
 
         self.current_frame_name_widget = QLineEdit()
         self.current_frame_name_widget.editingFinished.connect(self.refresh_choices_if_modified)
         left_layout.addWidget(self.current_frame_name_widget)
 
-        self.button_refresh = QPushButton("Refresh Frame Index")
-        self.button_refresh.clicked.connect(self.refresh)
-        left_layout.addWidget(self.button_refresh)
+        # Extra buttons.  TODO Put all controls in QGridLayout
+        initializer_box = QWidget()
+        initializer_layout = QHBoxLayout()
+        initializer_box.setLayout(initializer_layout)
+        left_layout.addWidget(initializer_box)
+
+        self.button_reload = QPushButton("Initialize / Reload")
+        self.button_reload.clicked.connect(self.reload_from_file)
+        initializer_layout.addWidget(self.button_reload)
 
         self.button_clear_log = QPushButton("Clear Log")
         self.button_clear_log.clicked.connect(self.clear_log)
-        left_layout.addWidget(self.button_clear_log)
+        initializer_layout.addWidget(self.button_clear_log)
 
+        # TEMP AREA START
         self.temp_button = QPushButton("Temp")
-        left_layout.addWidget(self.temp_button)
+        initializer_layout.addWidget(self.temp_button)
         self.temp_button.clicked.connect(self.do_a_thing)
+        # End Extra Buttons
+
+        self.action_line_edit = QLineEdit()
+        left_layout.addWidget(self.action_line_edit)
+        self.action_button = QPushButton("Do the Krita action in the text line above.")
+        left_layout.addWidget(self.action_button)
+        self.action_button.clicked.connect(self.do_action)
+        # TEMP AREA END
 
         self.log_text_area = QTextEdit()
         self.log_text_area.setReadOnly(True)
@@ -93,6 +131,7 @@ class ChooseYourOwnAnimation(DockWidget):
         self.future_frames_list.setModel(self.frames_model)
         right_layout.addWidget(self.future_frames_list)
 
+    # noinspection PyPep8Naming
     def canvasChanged(self, canvas):
         # TODO this is not "document changed". Should refresh future_frames when document loads.
         pass
@@ -120,37 +159,155 @@ class ChooseYourOwnAnimation(DockWidget):
         vertical_scroll_bar = self.log_text_area.verticalScrollBar()
         vertical_scroll_bar.setValue(vertical_scroll_bar.maximum())
 
-    def do_a_thing(self):
+    def do_a_thing(self) -> None:
         self.log_info("Doing the thing!")
-        active_doc = self.get_active_document()
-        if active_doc:
-            temp_layer = self.get_or_create_layer("Temp")
-
-            temp_image = temp_layer.thumbnail(128, 128)
-            temp_icon = QIcon(QPixmap.fromImage(temp_image))
-            temp_item = QStandardItem(temp_icon, "PlaceholderText")
-
-            temp2_layer = self.get_or_create_layer("Temp2")
-            x = 0
-            y = 0
-            w = active_doc.width()
-            h = active_doc.height()
-            dst_layer = temp2_layer
-            pixel_data_copy = self.get_node_pixel_projection("Temp")
-            dst_layer.setPixelData(pixel_data_copy, x, y, w, h)
-
-            self.frames_model.appendRow(temp_item)
+        active_document = self.get_active_document()
+        if active_document:
+            self.log_info(active_document.fileName())
+            pass
         self.log_info("Exiting Doing the thing function.")
 
-    def refresh(self) -> None:
+    def do_action(self) -> None:
+        action = self.action_line_edit.text()
+        self.log_info(f"Doing: {action}")
+        self.do_krita_action(action)
+        self.log_info("Done.")
+
+    def reload_from_file(self) -> None:
+        active_document = self.get_active_document()
+        if not active_document:
+            self.log_error("Make or open a document.")
+            return
+
+        if not os.path.exists(self._get_descriptor_filepath()):
+            self.descriptor_frames = []
+            self._save_descriptor()
+
         self.refresh_frame_index()
+
+        frames_directory = self._get_frames_directory()
+        if not os.path.exists(frames_directory):
+            os.makedirs(frames_directory)
+            self._export_frames()
+
+        self._load_descriptor()
+        self._regenerate_animation_layer()
+
+    def _get_frames_directory(self) -> str:
+        active_document = self.get_active_document()
+        krita_directory = os.path.dirname(active_document.fileName())
+        return os.path.join(krita_directory, self.DESCRIPTOR_FRAMES_DIRECTORY)
+
+    def _get_descriptor_filepath(self) -> str:
+        active_document = self.get_active_document()
+        krita_filename = os.path.basename(active_document.fileName())
+        descriptor_filename = krita_filename + self.DESCRIPTOR_FILE_SUFFIX
+        krita_directory = os.path.dirname(active_document.fileName())
+        return os.path.join(krita_directory, descriptor_filename)
+
+    def _save_descriptor(self) -> None:
+        descriptor = {self.KEY_FRAMES_DIRECTORY: self.DESCRIPTOR_FRAMES_DIRECTORY,
+                      self.KEY_FRAMES_PER_SECOND: self.get_active_document().framesPerSecond(),
+                      self.KEY_FRAMES_LIST: self.descriptor_frames}
+        with open(self._get_descriptor_filepath(), 'w') as outfile:
+            json.dump(descriptor, outfile)
+        self._update_animation_times()
+
+    def _load_descriptor(self) -> None:
+        with open(self._get_descriptor_filepath(), 'r') as outfile:
+            descriptor = json.load(outfile)
+            self.get_active_document().setFramesPerSecond(descriptor[self.KEY_FRAMES_PER_SECOND])
+            self.descriptor_frames = descriptor[self.KEY_FRAMES_LIST]
+        self._update_animation_times()
+
+        ending_frame_name = self.descriptor_frames[-1][self.KEY_FRAMES_LIST_FRAME_KEY] if self.descriptor_frames else ""
+        self.update_current_frame_name(ending_frame_name)
+
+    def _update_animation_times(self) -> None:
+        self.get_active_document().setFullClipRangeStartTime(0)
+        frame_count = self._get_frame_count()
+        end_time = frame_count - 1 if frame_count > 0 else 0
+        self.get_active_document().setFullClipRangeEndTime(end_time)
+
+    def update_current_frame_name(self, frame_name: str) -> None:
+        self.current_frame_name_widget.setText(frame_name)
         self.refresh_choices()
+
+    def _get_frame_count(self) -> int:
+        return sum([frame[self.KEY_FRAMES_LIST_FRAME_DURATION] for frame in self.descriptor_frames])
+
+    def _export_frames(self) -> None:
+        full_names_filepath = os.path.join(self._get_frames_directory(), self.FRAME_FULL_NAME_FILENAME)
+        full_names = {frame_name: node.name() for frame_name, node in self.frame_name_to_node.items()}
+        with open(full_names_filepath, 'w') as outfile:
+            json.dump(full_names, outfile)
+
+        for frame_name, node in self.frame_name_to_node.items():
+            self.export_node(self.get_active_document(), node, self.frame_name_to_filepath(frame_name))
+
+    def export_node(self, document: Document, node: Node, filepath: str) -> None:
+        resolution = document.resolution()
+        info = InfoObject()
+        info.setProperty("alpha", True)
+        info.setProperty("compression", 9)
+        info.setProperty("forceSRGB", False)
+        info.setProperty("indexed", False)
+        info.setProperty("interlaced", False)
+        info.setProperty("saveSRGBProfile", False)
+        info.setProperty("transparencyFillcolor", [0, 0, 0])
+
+        Krita.instance().setBatchmode(True)
+        self.log_info(f"Exporting: {filepath}")
+        node.save(filepath, resolution, resolution, info)
+        self.log_info(f"Exported: {filepath}")
+        Krita.instance().setBatchmode(False)
+
+    def _regenerate_animation_layer(self) -> None:
+        active_document = self.get_active_document()
+        # previous_active_node = active_document.activeNode()
+
+        old_animation_layer = active_document.nodeByName(self.ANIMATION_ROOT_LAYER_NAME)
+        if old_animation_layer:
+            old_animation_layer.remove()
+        animation_layer = active_document.createGroupLayer(self.ANIMATION_ROOT_LAYER_NAME)
+        active_document.rootNode().addChildNode(animation_layer, None)
+
+        self.log_info("Generating animation.")
+        self._regenerate_child_layers(active_document, animation_layer)
+
+        active_document.setActiveNode(animation_layer)
+        self.do_krita_action('convert_group_to_animated')
+        self.log_info("Animation generated.")
+        # active_document.setActiveNode(previous_active_node)
+
+    def _regenerate_child_layers(self, document: Document, root_animation_layer: Node) -> None:
+        frame_count_digits = len(str(self._get_frame_count()))
+        current_frame = 0
+        child_nodes = []
+        for frame in self.descriptor_frames:
+            frame_filepath = self.frame_name_to_filepath(frame[self.KEY_FRAMES_LIST_FRAME_KEY])
+            previous_layer = None
+            for i in range(0, frame[self.KEY_FRAMES_LIST_FRAME_DURATION]):
+                layer_name = str(current_frame).zfill(frame_count_digits)
+                if i == 0:
+                    file_layer = document.createFileLayer(layer_name, frame_filepath, self.SCALING_METHOD_NONE)
+                    previous_layer = file_layer
+                else:
+                    file_layer = document.createCloneLayer(layer_name, previous_layer)
+                child_nodes.append(file_layer)
+                current_frame += 1
+        root_animation_layer.setChildNodes(child_nodes)
+
+    def frame_name_to_filepath(self, frame_name: str) -> str:
+        return os.path.join(self._get_frames_directory(), frame_name + ".png")
 
     def refresh_frame_index(self) -> None:
         self.log_info(f"Refreshing future frame index...")
-        frame_name_to_node, frame_name_to_aliases, frame_name_to_destinations = self.get_layer_information()
+        self.frame_name_to_node, self.frame_name_to_destination_nodes = self.calculate_frame_destinations()
+        self.log_info(f"Done refreshing future frame index.")
 
-        self.frame_name_to_node = frame_name_to_node
+    def calculate_frame_destinations(self) -> Tuple[Dict[str, Node], Dict[str, List[Node]]]:
+        frame_name_to_node, frame_name_to_aliases, frame_name_to_destinations = self.get_layer_information()
 
         # What Node is being talked about when an alias is given. Since anything can claim an alias, we get a Set.
         destination_name_to_frame_name: Dict[str, Set[str]] = defaultdict(set)
@@ -159,19 +316,19 @@ class ChooseYourOwnAnimation(DockWidget):
                 destination_name_to_frame_name[alias].add(frame_name)
 
         # Finally, assemble the data structure we can query for what frames come next.
-        self.frame_name_to_destination_nodes.clear()
+        frame_name_to_destination_nodes: Dict[str, List[Node]] = {}
         for frame_name, aliases in frame_name_to_destinations.items():
-            destination_frame_names: Set[str] = set()
+            unique_destination_frame_names: Set[str] = set()
             for alias in aliases:
                 if alias not in destination_name_to_frame_name:
                     self.log_warning(f"Layer not found for alias: {alias}")
                     continue
-                destination_frame_names.update(destination_name_to_frame_name[alias])
+                unique_destination_frame_names.update(destination_name_to_frame_name[alias])
 
-            unique_destination_nodes = [self.frame_name_to_node[alias] for alias in destination_frame_names]
-            self.frame_name_to_destination_nodes[frame_name] = unique_destination_nodes
+            unique_destination_nodes = [frame_name_to_node[alias] for alias in unique_destination_frame_names]
+            frame_name_to_destination_nodes[frame_name] = unique_destination_nodes
 
-        self.log_info(f"Done refreshing future frame index.")
+        return frame_name_to_node, frame_name_to_destination_nodes
 
     def get_layer_information(self) -> Tuple[Dict[str, Node], Dict[str, List[str]], Dict[str, List[str]]]:
         leaf_nodes = self.get_leaf_nodes()
@@ -180,17 +337,21 @@ class ChooseYourOwnAnimation(DockWidget):
         frame_name_to_aliases: Dict[str, List[str]] = {}
         frame_name_to_destinations: Dict[str, List[str]] = {}
         for leaf in leaf_nodes:
-            name_with_removed_comments = self.COMMENT_PATTERN.sub("", leaf.name())
-            match = self.LAYER_NAME_PATTERN.fullmatch(name_with_removed_comments)
+            match = self.extract_strings_from_node(leaf)
             if not match:
                 self.log_warning(f"Skipping incorrectly named layer: {leaf.name()}")
                 continue
 
             frame_name = match.group('name')
             frame_aliases = match.group('aliases')
-            frame_destinations = match.group('dests')
+            frame_destinations = match.group('destinations')
+            if self.INVALID_FILENAME_CHARACTERS_PATTERN.search(frame_name):
+                self.log_warning(f"Skipping layer (invalid character): {frame_name}")
+                self.log_warning(f'Invalid character list: {" ".join(self.INVALID_FILENAME_CHARACTERS)}')
+                continue
+
             if frame_name in frame_name_to_node:
-                self.log_warning(f"Skipping layer with duplicate name: {frame_name}")
+                self.log_warning(f"Skipping layer (duplicate name): {frame_name}")
                 continue
             frame_name_to_node[frame_name] = leaf
             frame_name_to_aliases[frame_name] = frame_aliases.split(" ") if frame_aliases else []
@@ -198,6 +359,11 @@ class ChooseYourOwnAnimation(DockWidget):
             frame_name_to_destinations[frame_name] = frame_destinations.split(" ") if frame_destinations else []
 
         return frame_name_to_node, frame_name_to_aliases, frame_name_to_destinations
+
+    def extract_strings_from_node(self, node: Node) -> Optional[Match]:
+        name_with_removed_comments = self.COMMENT_PATTERN.sub("", node.name())
+        match = self.LAYER_NAME_PATTERN.fullmatch(name_with_removed_comments)
+        return match
 
     def get_leaf_nodes(self) -> List[Node]:
         doc = self.get_active_document()
@@ -230,53 +396,48 @@ class ChooseYourOwnAnimation(DockWidget):
         self.log_info("Refreshing future frame choices...")
 
         frame_name = self.current_frame_name_widget.text()
-        if frame_name not in self.frame_name_to_destination_nodes:
+        if not frame_name:
+            destination_nodes = self.frame_name_to_node.values()
+        elif frame_name not in self.frame_name_to_destination_nodes:
             self.log_error(f"No frames in index for: {frame_name}")
             return
+        else:
+            destination_nodes = self.frame_name_to_destination_nodes[frame_name]
 
         self.frames_model.clear()
-        # sorted(, key=attrgetter('name'))   # <--How to sort the Nodes by name later, for display.
-        destination_nodes = self.frame_name_to_destination_nodes[frame_name]
+        # sorted(destination_nodes, key=attrgetter('name'))
         for dn in destination_nodes:
-            frame_icon = QIcon(QPixmap.fromImage(dn.thumbnail(128, 128)))
-            self.frames_model.appendRow(QStandardItem(frame_icon, dn.name()))
+            destination_frame_icon = QIcon(QPixmap.fromImage(dn.thumbnail(128, 128)))
+            destination_frame_name = self.extract_strings_from_node(dn).group('name')
+            item = QStandardItem(destination_frame_icon, destination_frame_name)
+            item.setData(dn, self.NODE_DATA)
+            self.frames_model.appendRow(item)
 
         self.log_info("Finished refreshing future frame choices.")
 
     def choice_double_clicked(self, clicked_index) -> None:
-        self.log_info(f"User picked index {clicked_index}")
+        active_document = self.get_active_document()
+        if not active_document:
+            self.log_error("Make or open the document.")
+
+        node_of_clicked_choice = clicked_index.data(self.NODE_DATA)
+        frame_name = self.extract_strings_from_node(node_of_clicked_choice).group('name')
+        self.descriptor_frames.append({
+            self.KEY_FRAMES_LIST_FRAME_KEY: frame_name,
+            self.KEY_FRAMES_LIST_FRAME_DURATION: self.frames_to_add_spinner.value(),
+        })
+
+        self._save_descriptor()
+        self._regenerate_animation_layer()
+        self.update_current_frame_name(frame_name)
+
+    @staticmethod
+    def do_krita_action(action_name: str) -> None:
+        Krita.instance().action(action_name).trigger()
 
     @staticmethod
     def get_active_document() -> Optional[Document]:
         return Krita.instance().activeDocument()
-
-    def get_node_pixel_projection(self, node_name):
-        active_doc = self.get_active_document()
-        x = 0
-        y = 0
-        w = active_doc.width()
-        h = active_doc.height()
-        src_layer = active_doc.nodeByName(node_name)
-        if not src_layer:
-            self.log_warning(f"Could not find {node_name}")
-            return None
-        pixel_data = src_layer.projectionPixelData(x, y, w, h)
-        return pixel_data
-
-    @classmethod
-    def get_or_create_layer(cls, name):
-        active_doc = cls.get_active_document()
-        layer = active_doc.nodeByName(name)
-        if not layer:
-            layer = active_doc.createNode(name, "paintLayer")
-            active_doc.rootNode().addChildNode(layer, None)
-        return layer
-
-    def get_or_create_animation_layer(self):
-        animation_layer = self.get_or_create_layer(self.ANIMATION_ROOT_LAYER_NAME)
-        if not animation_layer.animated():
-            animation_layer.enableAnimation()
-        return animation_layer
 
 
 DOCKER_ID = "choose_your_own_animation"
