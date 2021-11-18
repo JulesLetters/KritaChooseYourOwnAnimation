@@ -16,7 +16,9 @@ class ChooseYourOwnAnimation(DockWidget):
     WINDOW_TITLE = "Choose Your Own Animation"
 
     ANIMATION_ROOT_LAYER_NAME = "Animation"
+    PERFORMANCE_ROOT_LAYER_NAME = "Animation_Performance"
     FRAMES_ROOT_LAYER_NAME = 'Frames'
+    BACKGROUND_LAYER_NAME = 'Background'
 
     INVALID_FILENAME_CHARACTERS = r'<>:"/\|?*'
     INVALID_FILENAME_CHARACTERS_PATTERN = re.compile(f"[{re.escape(INVALID_FILENAME_CHARACTERS)}]")
@@ -179,6 +181,7 @@ class ChooseYourOwnAnimation(DockWidget):
             self.log_error("Make or open a document.")
             return
 
+        # TODO disable controls
         if not os.path.exists(self._get_descriptor_filepath()):
             self.descriptor_frames = []
             self._save_descriptor()
@@ -192,6 +195,7 @@ class ChooseYourOwnAnimation(DockWidget):
 
         self._load_descriptor()
         self._regenerate_animation_layer()
+        # TODO enable controls
 
     def _get_frames_directory(self) -> str:
         active_document = self.get_active_document()
@@ -225,9 +229,11 @@ class ChooseYourOwnAnimation(DockWidget):
 
     def _update_animation_times(self) -> None:
         self.get_active_document().setFullClipRangeStartTime(0)
+        self.get_active_document().setFullClipRangeEndTime(self.calculate_animation_end_time())
+
+    def calculate_animation_end_time(self) -> int:
         frame_count = self._get_frame_count()
-        end_time = frame_count - 1 if frame_count > 0 else 0
-        self.get_active_document().setFullClipRangeEndTime(end_time)
+        return frame_count - 1 if frame_count > 0 else 0
 
     def update_current_frame_name(self, frame_name: str) -> None:
         self.current_frame_name_widget.setText(frame_name)
@@ -264,39 +270,110 @@ class ChooseYourOwnAnimation(DockWidget):
 
     def _regenerate_animation_layer(self) -> None:
         active_document = self.get_active_document()
-        # previous_active_node = active_document.activeNode()
-
-        old_animation_layer = active_document.nodeByName(self.ANIMATION_ROOT_LAYER_NAME)
-        if old_animation_layer:
-            old_animation_layer.remove()
-        animation_layer = active_document.createGroupLayer(self.ANIMATION_ROOT_LAYER_NAME)
-        active_document.rootNode().addChildNode(animation_layer, None)
+        frames_group = active_document.nodeByName(self.FRAMES_ROOT_LAYER_NAME)
+        frames_group.setVisible(False)
+        background_layer = active_document.nodeByName(self.BACKGROUND_LAYER_NAME)
 
         self.log_info("Generating animation.")
+        self.remove_layer_if_exists(active_document, self.ANIMATION_ROOT_LAYER_NAME)
+        animation_layer = active_document.createGroupLayer(self.ANIMATION_ROOT_LAYER_NAME)
+        active_document.rootNode().addChildNode(animation_layer, frames_group)
         self._regenerate_child_layers(active_document, animation_layer)
 
+        self.remove_layer_if_exists(active_document, self.PERFORMANCE_ROOT_LAYER_NAME)
+        performance_layer = animation_layer.clone()
+        performance_layer.setName(self.PERFORMANCE_ROOT_LAYER_NAME)
+        performance_layer.setVisible(False)
+        performance_layer.setCollapsed(True)
+        active_document.rootNode().addChildNode(performance_layer, background_layer)
+
         active_document.setActiveNode(animation_layer)
-        self.do_krita_action('convert_group_to_animated')
+        animation_layer.setPinnedToTimeline(True)
+
+        if animation_layer.childNodes():
+            animation_layer.childNodes()[-1].setVisible(True)
+        # self.do_krita_action('convert_group_to_animated')
+        # active_document.setCurrentTime(self.calculate_animation_end_time())
         self.log_info("Animation generated.")
-        # active_document.setActiveNode(previous_active_node)
+
+    def _append_animation_frames(self, frame_name: str, duration: int) -> None:
+        self.log_info(f"Appending {duration} frame(s): {frame_name}")
+
+        active_document = self.get_active_document()
+        performance_layer = active_document.nodeByName(self.PERFORMANCE_ROOT_LAYER_NAME)
+        if not performance_layer:
+            self.log_warning("Performance layer expected but not found. Regenerating.")
+            # Disable controls
+            self._regenerate_animation_layer()
+            # Enable controls
+            performance_layer = active_document.nodeByName(self.PERFORMANCE_ROOT_LAYER_NAME)
+
+        frame_insert_index = self._get_frame_count()
+        self.descriptor_frames.append({
+            self.KEY_FRAMES_LIST_FRAME_KEY: frame_name,
+            self.KEY_FRAMES_LIST_FRAME_DURATION: duration,
+        })
+        self._save_descriptor()
+        new_child_nodes = self._create_child_nodes(active_document, frame_name, duration, frame_insert_index)
+
+        # Work around bug in "setChildNodes(performance_layer.childNodes() + new_child_nodes)"
+        # Somehow trying to use setChildNodes allows the 0 index item to migrate to before the new nodes.
+        prev_child_nodes = performance_layer.childNodes()
+        prev_node = prev_child_nodes[-1] if prev_child_nodes else None
+        for node in new_child_nodes:
+            performance_layer.addChildNode(node, prev_node)
+            prev_node = node
+
+        self.remove_layer_if_exists(active_document, self.ANIMATION_ROOT_LAYER_NAME)
+        animation_layer = performance_layer.clone()
+        animation_layer.setName(self.ANIMATION_ROOT_LAYER_NAME)
+        animation_layer.setVisible(True)
+        frames_group = active_document.nodeByName(self.FRAMES_ROOT_LAYER_NAME)
+        active_document.rootNode().addChildNode(animation_layer, frames_group)
+
+        active_document.setActiveNode(animation_layer)
+        animation_layer.setPinnedToTimeline(True)
+        # animation_layer.setCollapsed(False)
+
+        if animation_layer.childNodes():
+            animation_layer.childNodes()[-1].setVisible(True)
+        # self.do_krita_action('convert_group_to_animated')
+        # active_document.setCurrentTime(self.calculate_animation_end_time())
+        self.log_info(f"Appended.")
+
+    @staticmethod
+    def remove_layer_if_exists(document: Document, layer_name: str) -> None:
+        layer = document.nodeByName(layer_name)
+        if layer:
+            layer.remove()
 
     def _regenerate_child_layers(self, document: Document, root_animation_layer: Node) -> None:
-        frame_count_digits = len(str(self._get_frame_count()))
         current_frame = 0
         child_nodes = []
         for frame in self.descriptor_frames:
-            frame_filepath = self.frame_name_to_filepath(frame[self.KEY_FRAMES_LIST_FRAME_KEY])
-            previous_layer = None
-            for i in range(0, frame[self.KEY_FRAMES_LIST_FRAME_DURATION]):
-                layer_name = str(current_frame).zfill(frame_count_digits)
-                if i == 0:
-                    file_layer = document.createFileLayer(layer_name, frame_filepath, self.SCALING_METHOD_NONE)
-                    previous_layer = file_layer
-                else:
-                    file_layer = document.createCloneLayer(layer_name, previous_layer)
-                child_nodes.append(file_layer)
-                current_frame += 1
+            frame_name = frame[self.KEY_FRAMES_LIST_FRAME_KEY]
+            duration = frame[self.KEY_FRAMES_LIST_FRAME_DURATION]
+            child_nodes.extend(self._create_child_nodes(document, frame_name, duration, current_frame))
+            current_frame += duration
         root_animation_layer.setChildNodes(child_nodes)
+
+    def _create_child_nodes(self, active_document: Document, frame_name: str, duration: int, current_frame: int):
+        frame_count = self._get_frame_count()
+        frame_count_digits = len(str(frame_count))
+        child_nodes = []
+        frame_filepath = self.frame_name_to_filepath(frame_name)
+        previous_layer = None
+        for i in range(0, duration):
+            layer_name = str(current_frame).zfill(frame_count_digits)
+            if i == 0:
+                file_layer = active_document.createFileLayer(layer_name, frame_filepath, self.SCALING_METHOD_NONE)
+                previous_layer = file_layer
+            else:
+                file_layer = active_document.createCloneLayer(layer_name, previous_layer)
+            file_layer.setVisible(False)
+            child_nodes.append(file_layer)
+            current_frame += 1
+        return child_nodes
 
     def frame_name_to_filepath(self, frame_name: str) -> str:
         return os.path.join(self._get_frames_directory(), frame_name + ".png")
@@ -422,13 +499,9 @@ class ChooseYourOwnAnimation(DockWidget):
 
         node_of_clicked_choice = clicked_index.data(self.NODE_DATA)
         frame_name = self.extract_strings_from_node(node_of_clicked_choice).group('name')
-        self.descriptor_frames.append({
-            self.KEY_FRAMES_LIST_FRAME_KEY: frame_name,
-            self.KEY_FRAMES_LIST_FRAME_DURATION: self.frames_to_add_spinner.value(),
-        })
+        duration = self.frames_to_add_spinner.value()
 
-        self._save_descriptor()
-        self._regenerate_animation_layer()
+        self._append_animation_frames(frame_name, duration)
         self.update_current_frame_name(frame_name)
 
     @staticmethod
