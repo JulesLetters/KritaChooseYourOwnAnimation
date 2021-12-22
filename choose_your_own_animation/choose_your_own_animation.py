@@ -64,15 +64,6 @@ class ChooseYourOwnAnimation(DockWidget):
         left_box.setLayout(left_layout)
         base_splitter.addWidget(left_box)
 
-        # Add Frames Button
-        self.add_frames_button = QPushButton("Add Frame(s)")
-        # self.add_frames_button.clicked.connect(self.add_frames_slot)
-        left_layout.addWidget(self.add_frames_button)
-        self.add_frames_button.setDisabled(True)
-
-        # Current Frame Textbox
-        # Goes here. Also will need a label, like the spinner below.
-
         # Number of frames to add Spinner.
         # TODO: Needs a label inside a... QHBoxLayout?
         self.frames_to_add_spinner = QSpinBox()
@@ -80,6 +71,8 @@ class ChooseYourOwnAnimation(DockWidget):
         self.frames_to_add_spinner.setValue(2)
         left_layout.addWidget(self.frames_to_add_spinner)
 
+        # Current Frame Textbox
+        # TODO needs a label
         self.current_frame_name_widget = QLineEdit()
         self.current_frame_name_widget.editingFinished.connect(self.refresh_choices_if_modified)
         left_layout.addWidget(self.current_frame_name_widget)
@@ -97,19 +90,6 @@ class ChooseYourOwnAnimation(DockWidget):
         self.button_clear_log = QPushButton("Clear Log")
         self.button_clear_log.clicked.connect(self.clear_log)
         initializer_layout.addWidget(self.button_clear_log)
-
-        # TEMP AREA START
-        self.temp_button = QPushButton("Temp")
-        initializer_layout.addWidget(self.temp_button)
-        self.temp_button.clicked.connect(self.do_a_thing)
-        # End Extra Buttons
-
-        self.action_line_edit = QLineEdit()
-        left_layout.addWidget(self.action_line_edit)
-        self.action_button = QPushButton("Do the Krita action in the text line above.")
-        left_layout.addWidget(self.action_button)
-        self.action_button.clicked.connect(self.do_action)
-        # TEMP AREA END
 
         self.log_text_area = QTextEdit()
         self.log_text_area.setReadOnly(True)
@@ -160,20 +140,6 @@ class ChooseYourOwnAnimation(DockWidget):
     def scroll_log_to_bottom(self) -> None:
         vertical_scroll_bar = self.log_text_area.verticalScrollBar()
         vertical_scroll_bar.setValue(vertical_scroll_bar.maximum())
-
-    def do_a_thing(self) -> None:
-        self.log_info("Doing the thing!")
-        active_document = self.get_active_document()
-        if active_document:
-            self.log_info(active_document.fileName())
-            pass
-        self.log_info("Exiting Doing the thing function.")
-
-    def do_action(self) -> None:
-        action = self.action_line_edit.text()
-        self.log_info(f"Doing: {action}")
-        self.do_krita_action(action)
-        self.log_info("Done.")
 
     def reload_from_file(self) -> None:
         active_document = self.get_active_document()
@@ -303,9 +269,9 @@ class ChooseYourOwnAnimation(DockWidget):
         performance_layer = active_document.nodeByName(self.PERFORMANCE_ROOT_LAYER_NAME)
         if not performance_layer:
             self.log_warning("Performance layer expected but not found. Regenerating.")
-            # Disable controls
+            # TODO Disable controls
             self._regenerate_animation_layer()
-            # Enable controls
+            # TODO Enable controls
             performance_layer = active_document.nodeByName(self.PERFORMANCE_ROOT_LAYER_NAME)
 
         frame_insert_index = self._get_frame_count()
@@ -318,6 +284,7 @@ class ChooseYourOwnAnimation(DockWidget):
 
         # Work around bug in "setChildNodes(performance_layer.childNodes() + new_child_nodes)"
         # Somehow trying to use setChildNodes allows the 0 index item to migrate to before the new nodes.
+        # https://bugs.kde.org/show_bug.cgi?id=446811
         prev_child_nodes = performance_layer.childNodes()
         prev_node = prev_child_nodes[-1] if prev_child_nodes else None
         for node in new_child_nodes:
