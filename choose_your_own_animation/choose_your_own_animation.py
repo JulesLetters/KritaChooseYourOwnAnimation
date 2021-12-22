@@ -439,7 +439,8 @@ class ChooseYourOwnAnimation(DockWidget):
 
     def extract_strings_from_node(self, node: Node) -> Optional[Match]:
         name_with_removed_comments = self.COMMENT_PATTERN.sub("", node.name())
-        match = self.LAYER_NAME_PATTERN.fullmatch(name_with_removed_comments)
+        name_with_spaces_squished = re.sub(r"\s\s+", " ", name_with_removed_comments.strip())
+        match = self.LAYER_NAME_PATTERN.fullmatch(name_with_spaces_squished)
         return match
 
     def get_leaf_nodes(self) -> List[Node]:
