@@ -214,7 +214,7 @@ class ChooseYourOwnAnimation(DockWidget):
                       self.KEY_FRAMES_PER_SECOND: self.get_active_document().framesPerSecond(),
                       self.KEY_FRAMES_LIST: self.descriptor_frames}
         with open(self._get_descriptor_filepath(), 'w') as outfile:
-            json.dump(descriptor, outfile)
+            json.dump(descriptor, outfile, indent=1, separators=(', ', ': '))
         self._update_animation_times()
 
     def _load_descriptor(self) -> None:
