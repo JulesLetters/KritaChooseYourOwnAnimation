@@ -7,8 +7,8 @@ from typing import List, Dict, Set, Tuple, Optional, Match
 
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QStandardItem, QStandardItemModel, QIcon, QPixmap
-from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout, QListView, QPushButton, QWidget, QSplitter, QSpinBox, QTextEdit, \
-    QLineEdit
+from PyQt5.QtWidgets import QHBoxLayout, QGridLayout, QVBoxLayout, QListView, QPushButton, QWidget, QSplitter, QSpinBox, \
+    QTextEdit, QLineEdit, QLabel, QSizePolicy
 from krita import Krita, Document, Node, InfoObject, DockWidget, DockWidgetFactory, DockWidgetFactoryBase
 
 
@@ -60,46 +60,47 @@ class ChooseYourOwnAnimation(DockWidget):
 
         # Left side
         left_box = QWidget()
-        left_layout = QVBoxLayout()
+        left_box_size_policy = QSizePolicy()
+        left_box_size_policy.setHorizontalStretch(1)
+        left_box.setSizePolicy(left_box_size_policy)
+        left_layout = QGridLayout()
         left_box.setLayout(left_layout)
+
         base_splitter.addWidget(left_box)
 
-        # Number of frames to add Spinner.
-        # TODO: Needs a label inside a... QHBoxLayout?
+        spinner_label = QLabel("Frames to add:")
+        left_layout.addWidget(spinner_label, 1, 1)
         self.frames_to_add_spinner = QSpinBox()
         self.frames_to_add_spinner.setMinimum(1)
         self.frames_to_add_spinner.setValue(2)
-        left_layout.addWidget(self.frames_to_add_spinner)
+        left_layout.addWidget(self.frames_to_add_spinner, 1, 2)
 
-        # Current Frame Textbox
-        # TODO needs a label
+        current_frame_label = QLabel("Current frame:")
+        left_layout.addWidget(current_frame_label, 2, 1)
         self.current_frame_name_widget = QLineEdit()
         self.current_frame_name_widget.editingFinished.connect(self.refresh_choices_if_modified)
-        left_layout.addWidget(self.current_frame_name_widget)
-
-        # Extra buttons.  TODO Put all controls in QGridLayout
-        initializer_box = QWidget()
-        initializer_layout = QHBoxLayout()
-        initializer_box.setLayout(initializer_layout)
-        left_layout.addWidget(initializer_box)
-
-        self.button_reload = QPushButton("Initialize / Reload")
-        self.button_reload.clicked.connect(self.reload_from_file)
-        initializer_layout.addWidget(self.button_reload)
+        left_layout.addWidget(self.current_frame_name_widget, 2, 2)
 
         self.button_clear_log = QPushButton("Clear Log")
         self.button_clear_log.clicked.connect(self.clear_log)
-        initializer_layout.addWidget(self.button_clear_log)
+        left_layout.addWidget(self.button_clear_log, 3, 1)
+
+        self.button_reload = QPushButton("Initialize / Reload")
+        self.button_reload.clicked.connect(self.reload_from_file)
+        left_layout.addWidget(self.button_reload, 3, 2)
 
         self.log_text_area = QTextEdit()
         self.log_text_area.setReadOnly(True)
-        left_layout.addWidget(self.log_text_area)
+        left_layout.addWidget(self.log_text_area, 4, 1, 1, 2)
 
         # Right side
         future_frames_box = QWidget()
-        base_splitter.addWidget(future_frames_box)
+        future_frames_box_size_policy = QSizePolicy()
+        future_frames_box_size_policy.setHorizontalStretch(2)
+        future_frames_box.setSizePolicy(future_frames_box_size_policy)
         right_layout = QVBoxLayout()
         future_frames_box.setLayout(right_layout)
+        base_splitter.addWidget(future_frames_box)
 
         # We don't need any "live update". A refresh button will do just fine.
         self.future_frames_list = QListView()
@@ -128,8 +129,8 @@ class ChooseYourOwnAnimation(DockWidget):
         self._log("ERROR", text)
 
     def _log(self, prefix: str, text: str) -> None:
-        time = datetime.datetime.now()
-        self.full_log += f"{time} - {prefix} - {text}\n"
+        time = datetime.datetime.now().strftime("%H:%M")
+        self.full_log += f"{time} {prefix} {text}\n"
         self.log_text_area.setPlainText(self.full_log)
         self.scroll_log_to_bottom()
 
