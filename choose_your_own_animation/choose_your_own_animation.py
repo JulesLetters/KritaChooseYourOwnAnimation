@@ -48,6 +48,8 @@ class ChooseYourOwnAnimation(DockWidget):
 
         self.descriptor_frames = []
 
+        self.controls = []
+
         self.setWindowTitle(self.WINDOW_TITLE)
         base_widget = QWidget()
         self.setWidget(base_widget)
@@ -74,20 +76,24 @@ class ChooseYourOwnAnimation(DockWidget):
         self.frames_to_add_spinner.setMinimum(1)
         self.frames_to_add_spinner.setValue(2)
         left_layout.addWidget(self.frames_to_add_spinner, 1, 2)
+        self.controls.append(self.frames_to_add_spinner)
 
         current_frame_label = QLabel("Current frame:")
         left_layout.addWidget(current_frame_label, 2, 1)
         self.current_frame_name_widget = QLineEdit()
         self.current_frame_name_widget.editingFinished.connect(self.refresh_choices_if_modified)
         left_layout.addWidget(self.current_frame_name_widget, 2, 2)
+        self.controls.append(self.frames_to_add_spinner)
 
         self.button_clear_log = QPushButton("Clear Log")
         self.button_clear_log.clicked.connect(self.clear_log)
         left_layout.addWidget(self.button_clear_log, 3, 1)
+        self.controls.append(self.button_clear_log)
 
         self.button_reload = QPushButton("Initialize / Reload")
         self.button_reload.clicked.connect(self.reload_from_file)
         left_layout.addWidget(self.button_reload, 3, 2)
+        self.controls.append(self.button_reload)
 
         self.log_text_area = QTextEdit()
         self.log_text_area.setReadOnly(True)
@@ -109,6 +115,7 @@ class ChooseYourOwnAnimation(DockWidget):
         self.future_frames_list.setIconSize(QSize(128, 128))
         self.future_frames_list.setResizeMode(QListView.Adjust)
         self.future_frames_list.doubleClicked.connect(self.choice_double_clicked)
+        self.controls.append(self.future_frames_list)
 
         self.frames_model = QStandardItemModel()
         self.future_frames_list.setModel(self.frames_model)
@@ -142,13 +149,21 @@ class ChooseYourOwnAnimation(DockWidget):
         vertical_scroll_bar = self.log_text_area.verticalScrollBar()
         vertical_scroll_bar.setValue(vertical_scroll_bar.maximum())
 
+    def disable_controls(self) -> None:
+        for c in self.controls:
+            c.setEnabled(False)
+
+    def enable_controls(self) -> None:
+        for c in self.controls:
+            c.setEnabled(True)
+
     def reload_from_file(self) -> None:
         active_document = self.get_active_document()
         if not active_document:
             self.log_error("Make or open a document.")
             return
 
-        # TODO disable controls
+        self.disable_controls()
         if not os.path.exists(self._get_descriptor_filepath()):
             self.descriptor_frames = []
             self._save_descriptor()
@@ -162,7 +177,7 @@ class ChooseYourOwnAnimation(DockWidget):
 
         self._load_descriptor()
         self._regenerate_animation_layer()
-        # TODO enable controls
+        self.enable_controls()
 
     def _get_frames_directory(self) -> str:
         active_document = self.get_active_document()
@@ -241,7 +256,7 @@ class ChooseYourOwnAnimation(DockWidget):
         frames_group.setVisible(False)
         background_layer = active_document.nodeByName(self.BACKGROUND_LAYER_NAME)
 
-        self.log_info("Generating animation.")
+        self.log_info("Generating animation...")
         self.remove_layer_if_exists(active_document, self.ANIMATION_ROOT_LAYER_NAME)
         animation_layer = active_document.createGroupLayer(self.ANIMATION_ROOT_LAYER_NAME)
         active_document.rootNode().addChildNode(animation_layer, frames_group)
@@ -270,9 +285,7 @@ class ChooseYourOwnAnimation(DockWidget):
         performance_layer = active_document.nodeByName(self.PERFORMANCE_ROOT_LAYER_NAME)
         if not performance_layer:
             self.log_warning("Performance layer expected but not found. Regenerating.")
-            # TODO Disable controls
             self._regenerate_animation_layer()
-            # TODO Enable controls
             performance_layer = active_document.nodeByName(self.PERFORMANCE_ROOT_LAYER_NAME)
 
         frame_insert_index = self._get_frame_count()
@@ -435,8 +448,10 @@ class ChooseYourOwnAnimation(DockWidget):
 
     def refresh_choices_if_modified(self) -> None:
         if self.current_frame_name_widget.isModified():
+            self.disable_controls()
             self.current_frame_name_widget.setModified(False)
             self.refresh_choices()
+            self.enable_controls()
 
     def refresh_choices(self) -> None:
         self.log_info("Refreshing future frame choices...")
@@ -470,8 +485,10 @@ class ChooseYourOwnAnimation(DockWidget):
         frame_name = self.extract_strings_from_node(node_of_clicked_choice).group('name')
         duration = self.frames_to_add_spinner.value()
 
+        self.disable_controls()
         self._append_animation_frames(frame_name, duration)
         self.update_current_frame_name(frame_name)
+        self.enable_controls()
 
     @staticmethod
     def do_krita_action(action_name: str) -> None:
